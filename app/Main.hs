@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable, RecordWildCards, OverloadedStrings, TupleSections #-}
 module Main where
 
 import System.Console.CmdArgs
@@ -14,6 +14,8 @@ import System.Directory
 import Control.Monad.Extra
 import Codec.Midi as MIDI
 import Numeric (showHex)
+import Data.List.Extra
+import Data.List (sortOn)
 import Data.Monoid
 import Data.Maybe
 --import Control.Monad
@@ -53,7 +55,7 @@ processMIDI Midi{..} = do
     -- print fileType
     -- print timeDiv
     -- putStrLn $ "nTracks " <> show (length tracks)
-    forM_ tracks processTrack
+    forM_ (mergeTracks tracks) processTrack
 
 processTrack :: Track Ticks -> IO ()
 processTrack xs = do
@@ -74,4 +76,39 @@ translateMidi n NoteOff{..} = Just $ unwords
     , show velocity
     ]
 translateMidi _ _ = Nothing
+
+mergeTracks :: [Track Ticks] -> [Track Ticks]
+mergeTracks
+    = (:[])
+    . concatMap ungroup
+    . differentiateTicks
+    . groupSort
+    . sortOn fst
+    . filter (keeper . snd)
+    . concatMap integrateTicks
+    . zipWith remapChannel [1..]
+
+integrateTicks :: Track Ticks -> Track Ticks
+integrateTicks [] = []
+integrateTicks xs = scanl f (head xs) xs
+    where f (tx, mx) (ty, my) = (tx + ty, my)
+
+differentiateTicks :: [(Ticks, [Message])] -> [(Ticks, [Message])] 
+differentiateTicks xs@(x:_) = x : zipWith f (init xs) (tail xs)
+    where f (tx, mxs) (ty, mys) = (ty - tx, mys)
+
+ungroup :: (Ticks, [Message]) -> [(Ticks, Message)]
+ungroup (t, (x:xs)) = (t, x) : map (0,) xs
+    
+keeper :: Message -> Bool
+keeper NoteOn{} = True
+keeper NoteOff{} = True
+keeper _ = False
+
+remapChannel :: Int -> Track Ticks -> Track Ticks
+remapChannel i = map f
+    where f (t, m@NoteOn{}) = (t, m { channel = i })
+          f (t, m@NoteOff{}) = (t, m { channel = i })
+          f (t, m) = (t, m)
+
 
