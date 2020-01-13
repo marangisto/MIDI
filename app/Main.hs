@@ -60,6 +60,7 @@ processMIDI Options{analyze=True,..} Midi{..}  = do
     putStrLn $ "nTracks " <> show (length tracks)
     forM_ (zip [0..] tracks) $ \(i, xs) -> do
         putStrLn $ "track[" <> show i <> "]: " <> fromMaybe "" (trackName xs)
+        putStrLn $ "channels" <> show (catMaybes $ map fst $ separateChannels xs)
         forM_ (trackText xs) $ putStrLn . ("    "<>)
         forM_ (copyright xs) $ putStrLn . ("    "<>)
         forM_ (messageStats xs) $ \(c, n) ->
@@ -103,13 +104,13 @@ integrateTicks [] = []
 integrateTicks xs = scanl f (head xs) xs
     where f (tx, mx) (ty, my) = (tx + ty, my)
 
-differentiateTicks :: [(Ticks, [Message])] -> [(Ticks, [Message])] 
+differentiateTicks :: [(Ticks, [Message])] -> [(Ticks, [Message])]
 differentiateTicks xs@(x:_) = x : zipWith f (init xs) (tail xs)
     where f (tx, mxs) (ty, mys) = (ty - tx, mys)
 
 ungroup :: (Ticks, [Message]) -> [(Ticks, Message)]
 ungroup (t, (x:xs)) = (t, x) : map (0,) xs
-    
+
 keeper :: Message -> Bool
 keeper NoteOn{} = True
 keeper NoteOff{} = True
@@ -123,7 +124,11 @@ remapChannel i = map f
 
 toIntervals :: Track Ticks -> [((Ticks, Message), Maybe (Ticks, Message))]  -- note-on, maybe note-off
 toIntervals xs = undefined
+    -- fixme: this should be typed to capture all events for this channel bracketed by on and off messages
     -- where bynotes = groupSortOn undefined
+
+separateChannels :: Track Ticks -> [(Maybe Channel, Track Ticks)] -- use on integrated time!
+separateChannels = groupSort . map (\(t, m) -> (messageChannel m, (t, m)))
 
 messageStats :: Track Ticks -> [(Constructor, Int)]
 messageStats = map (second length) . groupSort . map ((,()) . constructor . snd)
@@ -194,3 +199,13 @@ trackText xs = [ s |  (_, Text s) <- xs ]
 copyright :: Track Ticks -> [String]
 copyright xs = [ s |  (_, Copyright s) <- xs ]
 
+messageChannel :: Message -> Maybe Int
+messageChannel NoteOff{..} = Just channel
+messageChannel NoteOn{..} = Just channel
+messageChannel KeyPressure{..} = Just channel
+messageChannel ControlChange{..} = Just channel
+messageChannel ProgramChange{..} = Just channel
+messageChannel ChannelPressure{..} = Just channel
+messageChannel PitchWheel{..} = Just channel
+messageChannel (ChannelPrefix channel) = Just channel
+messageChannel _ = Nothing
