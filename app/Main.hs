@@ -12,13 +12,14 @@ import System.Directory
 --import Control.Monad.IO.Class
 --import Control.Monad.Loops
 import Control.Monad.Extra
+import Control.Monad
+import Control.Arrow (second)
 import Codec.Midi as MIDI
 import Numeric (showHex)
 import Data.List.Extra
 import Data.List (sortOn)
 import Data.Monoid
 import Data.Maybe
---import Control.Monad
 --import Data.List (stripPrefix)
 --import Data.Maybe
 --import Data.IORef
@@ -27,6 +28,7 @@ import Data.Maybe
 data Options = Options
     { port      :: FilePath
     , dir       :: Maybe FilePath
+    , analyze   :: Bool
     , files     :: [FilePath]
     } deriving (Show, Eq, Data, Typeable)
 
@@ -34,6 +36,7 @@ options :: Main.Options
 options = Main.Options
     { port = def &= help "serial port"
     , dir = def &= help "working directory"
+    , analyze = def &= help "analyze contents"
     , files = def &= args &= typ "FILES"
     } &=
     verbosity &=
@@ -48,14 +51,21 @@ main = do
     whenJust dir setCurrentDirectory
     -- hSetNewlineMode stdout noNewlineTranslation
     -- print opts
-    forM_ files $ \fp -> either error processMIDI =<< MIDI.importFile fp
+    forM_ files $ \fp -> either error (processMIDI opts) =<< MIDI.importFile fp
 
-processMIDI :: Midi -> IO ()
-processMIDI Midi{..} = do
-    -- print fileType
-    -- print timeDiv
-    -- putStrLn $ "nTracks " <> show (length tracks)
-    forM_ (mergeTracks tracks) processTrack
+processMIDI :: Options -> Midi -> IO ()
+processMIDI Options{analyze=True,..} Midi{..}  = do
+    print fileType
+    print timeDiv
+    putStrLn $ "nTracks " <> show (length tracks)
+    forM_ (zip [0..] tracks) $ \(i, xs) -> do
+        putStrLn $ "track[" <> show i <> "]: " <> fromMaybe "" (trackName xs)
+        forM_ (trackText xs) $ putStrLn . ("    "<>)
+        forM_ (copyright xs) $ putStrLn . ("    "<>)
+        forM_ (messageStats xs) $ \(c, n) ->
+            putStrLn (unwords [ "   ", show c, show n ])
+
+processMIDI _ Midi{..} = forM_ (mergeTracks tracks) processTrack
 
 processTrack :: Track Ticks -> IO ()
 processTrack xs = do
@@ -111,4 +121,76 @@ remapChannel i = map f
           f (t, m@NoteOff{}) = (t, m { channel = i })
           f (t, m) = (t, m)
 
+toIntervals :: Track Ticks -> [((Ticks, Message), Maybe (Ticks, Message))]  -- note-on, maybe note-off
+toIntervals xs = undefined
+    -- where bynotes = groupSortOn undefined
+
+messageStats :: Track Ticks -> [(Constructor, Int)]
+messageStats = map (second length) . groupSort . map ((,()) . constructor . snd)
+
+data Constructor
+    = CNoteOff
+    | CNoteOn
+    | CKeyPressure
+    | CControlChange
+    | CProgramChange
+    | CChannelPressure
+    | CPitchWheel
+    | CSequenceNumber
+    | CText
+    | CCopyright
+    | CTrackName
+    | CInstrumentName
+    | CLyrics
+    | CMarker
+    | CCuePoint
+    | CChannelPrefix
+    | CProgramName
+    | CDeviceName
+    | CTrackEnd
+    | CTempoChange
+    | CSMPTEOffset
+    | CTimeSignature
+    | CKeySignature
+    | CReserved
+    | CSysex
+    deriving (Eq, Ord, Show)
+
+constructor :: Message -> Constructor
+constructor ChannelPrefix{} = CChannelPrefix
+constructor ChannelPressure{} = CChannelPressure
+constructor ControlChange{} = CControlChange
+constructor Copyright{} = CCopyright
+constructor CuePoint{} = CCuePoint
+constructor DeviceName{} = CDeviceName
+constructor InstrumentName{} = CInstrumentName
+constructor KeyPressure{} = CKeyPressure
+constructor KeySignature{} = CKeySignature
+constructor Lyrics{} = CLyrics
+constructor Marker{} = CMarker
+constructor NoteOff{} = CNoteOff
+constructor NoteOn{} = CNoteOn
+constructor PitchWheel{} = CPitchWheel
+constructor ProgramChange{} = CProgramChange
+constructor ProgramName{} = CProgramName
+constructor Reserved{} = CReserved
+constructor SequenceNumber{} = CSequenceNumber
+constructor SMPTEOffset{} = CSMPTEOffset
+constructor Sysex{} = CSysex
+constructor TempoChange{} = CTempoChange
+constructor Text{} = CText
+constructor TimeSignature{} = CTimeSignature
+constructor TrackEnd{} = CTrackEnd
+constructor TrackName{} = CTrackName
+
+trackName :: Track Ticks -> Maybe String
+trackName xs
+    | (s:_) <- [ s | (_, TrackName s) <- xs ] = Just s
+    | otherwise = Nothing
+
+trackText :: Track Ticks -> [String]
+trackText xs = [ s |  (_, Text s) <- xs ]
+
+copyright :: Track Ticks -> [String]
+copyright xs = [ s |  (_, Copyright s) <- xs ]
 
