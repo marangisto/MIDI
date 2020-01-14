@@ -63,10 +63,16 @@ processMIDI Options{analyze=True,..} Midi{..}  = do
         putStrLn $ "channels" <> show (catMaybes $ map fst $ separateChannels xs)
         forM_ (trackText xs) $ putStrLn . ("    "<>)
         forM_ (copyright xs) $ putStrLn . ("    "<>)
-        forM_ (messageStats xs) $ \(c, n) ->
-            putStrLn (unwords [ "   ", show c, show n ])
-
-processMIDI _ Midi{..} = forM_ (mergeTracks tracks) processTrack
+        forM_ (messageStats xs) $ \(c, n) -> putStrLn (unwords [ "   ", show c, show n ])
+        let ys = noteOnOff $ integrateTicks xs
+        mapM_ print ys
+--processMIDI _ Midi{..} = forM_ (mergeTracks tracks) processTrack
+processMIDI _ Midi{..}
+    = forM_ (mergeTracks tracks)
+    $ processTrack
+    . differentiateTicks
+    . noteOnOff
+    . integrateTicks
 
 processTrack :: Track Ticks -> IO ()
 processTrack xs = do
@@ -104,7 +110,8 @@ integrateTicks [] = []
 integrateTicks xs = scanl f (head xs) xs
     where f (tx, mx) (ty, my) = (tx + ty, my)
 
-differentiateTicks :: [(Ticks, [Message])] -> [(Ticks, [Message])]
+--differentiateTicks :: [(Ticks, [Message])] -> [(Ticks, [Message])]
+differentiateTicks :: [(Ticks, a)] -> [(Ticks, a)]
 differentiateTicks xs@(x:_) = x : zipWith f (init xs) (tail xs)
     where f (tx, mxs) (ty, mys) = (ty - tx, mys)
 
@@ -122,13 +129,19 @@ remapChannel i = map f
           f (t, m@NoteOff{}) = (t, m { channel = i })
           f (t, m) = (t, m)
 
-toIntervals :: Track Ticks -> [((Ticks, Message), Maybe (Ticks, Message))]  -- note-on, maybe note-off
-toIntervals xs = undefined
-    -- fixme: this should be typed to capture all events for this channel bracketed by on and off messages
-    -- where bynotes = groupSortOn undefined
+separateKeys :: Track Ticks -> [(Maybe Key, [(Ticks, Message)])] -- use on integrated time!
+separateKeys = groupSort . map (\(t, m) -> (messageKey m, (t, m)))
 
 separateChannels :: Track Ticks -> [(Maybe Channel, Track Ticks)] -- use on integrated time!
 separateChannels = groupSort . map (\(t, m) -> (messageChannel m, (t, m)))
+
+noteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
+noteOnOff xs = concat
+    [ [ (t, NoteOn c k v), (t, NoteOff c k 127) ]
+    | ((t, NoteOn { key = k, velocity = v }), c)
+    <- zip ys $ concat $ repeat [1..4]
+    ]
+    where ys = [ x | x@(_, NoteOn{}) <- xs ]
 
 messageStats :: Track Ticks -> [(Constructor, Int)]
 messageStats = map (second length) . groupSort . map ((,()) . constructor . snd)
@@ -199,7 +212,7 @@ trackText xs = [ s |  (_, Text s) <- xs ]
 copyright :: Track Ticks -> [String]
 copyright xs = [ s |  (_, Copyright s) <- xs ]
 
-messageChannel :: Message -> Maybe Int
+messageChannel :: Message -> Maybe Channel
 messageChannel NoteOff{..} = Just channel
 messageChannel NoteOn{..} = Just channel
 messageChannel KeyPressure{..} = Just channel
@@ -209,3 +222,10 @@ messageChannel ChannelPressure{..} = Just channel
 messageChannel PitchWheel{..} = Just channel
 messageChannel (ChannelPrefix channel) = Just channel
 messageChannel _ = Nothing
+
+messageKey :: Message -> Maybe Key
+messageKey NoteOff{..} = Just key
+messageKey NoteOn{..} = Just key
+messageKey KeyPressure{..} = Just key
+messageKey _ = Nothing
+
