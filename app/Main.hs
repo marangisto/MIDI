@@ -139,7 +139,7 @@ noteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
 noteOnOff xs = concat
     [ [ (t, NoteOn c k v), (t, NoteOff c k 127) ]
     | ((t, NoteOn { key = k, velocity = v }), c)
-    <- zip ys $ concat $ repeat [1..4]
+    <- zip ys $ concat $ repeat [1..8]
     ]
     where ys = [ x | x@(_, NoteOn{}) <- xs ]
 
