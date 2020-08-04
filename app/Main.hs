@@ -20,6 +20,8 @@ import Data.List.Extra
 import Data.List (sortOn)
 import Data.Monoid
 import Data.Maybe
+import qualified Data.Vector as Vector
+import Data.Vector ((//), (!))
 --import Data.List (stripPrefix)
 --import Data.Maybe
 --import Data.IORef
@@ -135,13 +137,58 @@ separateKeys = groupSort . map (\(t, m) -> (messageKey m, (t, m)))
 separateChannels :: Track Ticks -> [(Maybe Channel, Track Ticks)] -- use on integrated time!
 separateChannels = groupSort . map (\(t, m) -> (messageChannel m, (t, m)))
 
-noteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
-noteOnOff xs = concat
+xnoteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
+xnoteOnOff xs = concat
     [ [ (t, NoteOn c k v), (t, NoteOff c k 127) ]
     | ((t, NoteOn { key = k, velocity = v }), c)
     <- zip ys $ concat $ repeat [1..8]
     ]
     where ys = [ x | x@(_, NoteOn{}) <- xs ]
+
+data State
+    = Idle Ticks
+    | Playing Ticks Key
+    deriving (Eq, Ord, Show)
+
+type Chans = Vector.Vector State
+
+mkChans :: Int -> Chans
+mkChans n = Vector.replicate n (Idle 0)
+
+isIdle :: State -> Bool
+isIdle (Idle _) = True
+isIdle _ = False
+
+ticks :: State -> Ticks
+ticks (Idle t) = t
+ticks (Playing t _) = t
+
+lru :: Chans -> Maybe Int
+lru chans
+    | ((_, c):_) <- sort ys = Just c
+    | otherwise = Nothing
+    where xs = Vector.toList $ Vector.findIndices isIdle chans
+          ys = map (\c -> (ticks $ chans!c, c)) xs
+
+isPlaying :: Key -> State -> Bool
+isPlaying key (Playing _ k) = k == key
+isPlaying _ _ = False
+
+noteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
+noteOnOff = snd . mapAccumL playNote (mkChans 8) . filter playable
+    where playable (_, NoteOn{}) = True
+          playable (_, NoteOff{}) = True
+          playable _ = False
+
+playNote :: Chans -> (Ticks, Message) -> (Chans, (Ticks, Message))
+playNote chans (t, m@NoteOn{..})
+    | Just c <- lru chans
+    = (chans // [(c, Playing t key)], (t, m { channel = c + 1 }))
+    | otherwise = error "out of channels"
+playNote chans (t, m@NoteOff{..})
+    | Just c <- Vector.findIndex (isPlaying key) chans
+    = (chans // [(c, Idle t)], (t, m { channel = c + 1 }))
+playNote _ _ = error "unexpected message type"
 
 messageStats :: Track Ticks -> [(Constructor, Int)]
 messageStats = map (second length) . groupSort . map ((,()) . constructor . snd)
