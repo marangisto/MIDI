@@ -191,6 +191,8 @@ noteOnOff = concat . snd . mapAccumL playNote (mkChans 8) . filter playable
 
 playNote :: Chans -> (Ticks, Message) -> (Chans, [(Ticks, Message)])
 playNote chans (t, m@NoteOn{..})
+    | velocity == 0
+    = playNote chans (t, NoteOff{..})
     | Just c <- Vector.findIndex (isPlaying key) chans
     = ( chans
       , [ (t, NoteOff (c + 1) key 127)
@@ -209,7 +211,6 @@ playNote chans (t, m@NoteOn{..})
           , (t, m { channel = c + 1 })
           ]
         )
-
     -- | otherwise = error "out of channels"
 playNote chans (t, m@NoteOff{..})
     | Just c <- Vector.findIndex (isPlaying key) chans
