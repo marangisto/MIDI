@@ -163,6 +163,10 @@ ticks :: State -> Ticks
 ticks (Idle t) = t
 ticks (Playing t _) = t
 
+ckey :: State -> Key
+ckey (Idle _) = error "no key on idle channel"
+ckey (Playing _ k) = k
+
 lru :: Chans -> Maybe Int
 lru chans
     | ((_, c):_) <- sort ys = Just c
@@ -170,25 +174,48 @@ lru chans
     where xs = Vector.toList $ Vector.findIndices isIdle chans
           ys = map (\c -> (ticks $ chans!c, c)) xs
 
+lru' :: Chans -> (Int, Key)
+lru' chans = let c = snd . head $ sort ys in (c, ckey $ chans!c)
+    where xs = [0..Vector.length chans - 1]
+          ys = map (\c -> (ticks $ chans!c, c)) xs
+
 isPlaying :: Key -> State -> Bool
 isPlaying key (Playing _ k) = k == key
 isPlaying _ _ = False
 
 noteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
-noteOnOff = snd . mapAccumL playNote (mkChans 8) . filter playable
+noteOnOff = concat . snd . mapAccumL playNote (mkChans 8) . filter playable
     where playable (_, NoteOn{}) = True
           playable (_, NoteOff{}) = True
           playable _ = False
 
-playNote :: Chans -> (Ticks, Message) -> (Chans, (Ticks, Message))
+playNote :: Chans -> (Ticks, Message) -> (Chans, [(Ticks, Message)])
 playNote chans (t, m@NoteOn{..})
+    | Just c <- Vector.findIndex (isPlaying key) chans
+    = ( chans
+      , [ (t, NoteOff (c + 1) key 127)
+        , (t, m { channel = c + 1 })
+        ]
+      )
     | Just c <- lru chans
-    = (chans // [(c, Playing t key)], (t, m { channel = c + 1 }))
-    | otherwise = error "out of channels"
+    = ( chans // [ (c, Playing t key) ]
+      , [ (t, m { channel = c + 1 })
+        ]
+      )
+    | otherwise
+    = let (c, k) = lru' chans in
+        ( chans // [ (c, Playing t key) ]
+        , [ (t, NoteOff (c + 1) k 127)
+          , (t, m { channel = c + 1 })
+          ]
+        )
+
+    -- | otherwise = error "out of channels"
 playNote chans (t, m@NoteOff{..})
     | Just c <- Vector.findIndex (isPlaying key) chans
-    = (chans // [(c, Idle t)], (t, m { channel = c + 1 }))
-playNote _ _ = error "unexpected message type"
+    = (chans // [(c, Idle t)], [(t, m { channel = c + 1 })])
+    | otherwise = (chans, [])
+playNote _ m = error $ "unexpected message type" <> show m
 
 messageStats :: Track Ticks -> [(Constructor, Int)]
 messageStats = map (second length) . groupSort . map ((,()) . constructor . snd)
