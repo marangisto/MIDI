@@ -10,6 +10,7 @@ import Codec.Midi as MIDI
 import Numeric (showHex)
 import Data.List.Extra
 import Data.List (sortOn)
+import Data.Char (isAscii)
 import Data.Monoid
 import Data.Maybe
 import qualified Data.Vector as Vector
@@ -51,10 +52,10 @@ processMIDI Options{analyze=True,..} Midi{..}  = do
     print timeDiv
     putStrLn $ "nTracks " <> show (length tracks)
     forM_ (zip [0..] tracks) $ \(i, xs) -> do
-        putStrLn $ "track[" <> show i <> "]: " <> fromMaybe "" (trackName xs)
+        putStrLn $ "track[" <> show i <> "]: " <> maybe "" (filter isAscii) (trackName xs)
         putStrLn $ "channels" <> show (catMaybes $ map fst $ separateChannels xs)
-        forM_ (trackText xs) $ putStrLn . ("    "<>)
-        forM_ (copyright xs) $ putStrLn . ("    "<>)
+        forM_ (trackText xs) $ putStrLn . ("    "<>) . filter isAscii
+        forM_ (copyright xs) $ putStrLn . ("    "<>) . filter isAscii
         forM_ (messageStats xs) $ \(c, n) -> putStrLn (unwords [ "   ", show c, show n ])
 processMIDI Options{..} Midi{..}
     = forM_ (mergeTracks $ select track tracks)
