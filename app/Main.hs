@@ -44,6 +44,7 @@ main = do
     forM_ files $ \fp -> either error (processMIDI opts) =<< MIDI.importFile fp
 
 processMIDI :: Options -> Midi -> IO ()
+    {-
 processMIDI Options{analyze=True,..} Midi{..}  = do
     print fileType
     print timeDiv
@@ -54,19 +55,21 @@ processMIDI Options{analyze=True,..} Midi{..}  = do
         forM_ (trackText xs) $ putStrLn . ("    "<>)
         forM_ (copyright xs) $ putStrLn . ("    "<>)
         forM_ (messageStats xs) $ \(c, n) -> putStrLn (unwords [ "   ", show c, show n ])
-        let ys = noteOnOff $ integrateTicks xs
+        let ys = noteOnOff $ integrate xs
         mapM_ print ys
+        -}
 processMIDI _ Midi{..}
     = forM_ (mergeTracks tracks)
     $ processTrack
-    . differentiateTicks
+    . differentiate
     . noteOnOff
-    . integrateTicks
+    . integrate
+    . toRealTime timeDiv
 
-processTrack :: Track Ticks -> IO ()
+processTrack :: Show t => Track t -> IO ()
 processTrack xs = mapM_ putStrLn $ mapMaybe (uncurry translateMidi) xs
 
-translateMidi :: Ticks -> Message -> Maybe String
+translateMidi :: Show t => t -> Message -> Maybe String
 translateMidi n NoteOn{..} = Just $ unwords
     [ show n
     , "9" <> showHex channel ""
@@ -81,27 +84,27 @@ translateMidi n NoteOff{..} = Just $ unwords
     ]
 translateMidi _ _ = Nothing
 
-mergeTracks :: [Track Ticks] -> [Track Ticks]
+mergeTracks :: (Num t, Ord t) => [Track t] -> [Track t]
 mergeTracks
     = (:[])
     . concatMap ungroup
-    . differentiateTicks
+    . differentiate
     . groupSort
     . sortOn fst
     . filter (keeper . snd)
-    . concatMap integrateTicks
+    . concatMap integrate
     . zipWith remapChannel [1..]
 
-integrateTicks :: Track Ticks -> Track Ticks
-integrateTicks [] = []
-integrateTicks xs = scanl f (head xs) xs
+integrate :: Num t => Track t -> Track t
+integrate [] = []
+integrate xs = scanl f (head xs) xs
     where f (tx, mx) (ty, my) = (tx + ty, my)
 
-differentiateTicks :: [(Ticks, a)] -> [(Ticks, a)]
-differentiateTicks xs@(x:_) = x : zipWith f (init xs) (tail xs)
+differentiate :: Num t => [(t, a)] -> [(t, a)]
+differentiate xs@(x:_) = x : zipWith f (init xs) (tail xs)
     where f (tx, mxs) (ty, mys) = (ty - tx, mys)
 
-ungroup :: (Ticks, [Message]) -> [(Ticks, Message)]
+ungroup :: Num t => (t, [Message]) -> [(t, Message)]
 ungroup (t, (x:xs)) = (t, x) : map (0,) xs
 
 keeper :: Message -> Bool
@@ -109,21 +112,21 @@ keeper NoteOn{} = True
 keeper NoteOff{} = True
 keeper _ = False
 
-remapChannel :: Int -> Track Ticks -> Track Ticks
+remapChannel :: Int -> Track t -> Track t
 remapChannel i = map f
     where f (t, m@NoteOn{}) = (t, m { channel = i })
           f (t, m@NoteOff{}) = (t, m { channel = i })
           f (t, m) = (t, m)
 
-separateKeys :: Track Ticks -> [(Maybe Key, [(Ticks, Message)])] -- use on integrated time!
+separateKeys :: Track t -> [(Maybe Key, [(t, Message)])] -- use on integrated time!
 separateKeys = groupSort . map (\(t, m) -> (messageKey m, (t, m)))
 
-separateChannels :: Track Ticks -> [(Maybe Channel, Track Ticks)] -- use on integrated time!
+separateChannels :: Track t -> [(Maybe Channel, Track t)] -- use on integrated time!
 separateChannels = groupSort . map (\(t, m) -> (messageChannel m, (t, m)))
 
 data State
-    = Idle Ticks
-    | Playing Ticks Key
+    = Idle Time
+    | Playing Time Key
     deriving (Eq, Ord, Show)
 
 type Chans = Vector.Vector State
@@ -135,7 +138,7 @@ isIdle :: State -> Bool
 isIdle (Idle _) = True
 isIdle _ = False
 
-ticks :: State -> Ticks
+ticks :: State -> Time
 ticks (Idle t) = t
 ticks (Playing t _) = t
 
@@ -159,13 +162,13 @@ isPlaying :: Key -> State -> Bool
 isPlaying key (Playing _ k) = k == key
 isPlaying _ _ = False
 
-noteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
+noteOnOff :: Track Time -> Track Time -- use on integrated time!
 noteOnOff = concat . snd . mapAccumL playNote (mkChans 8) . filter playable
     where playable (_, NoteOn{}) = True
           playable (_, NoteOff{}) = True
           playable _ = False
 
-playNote :: Chans -> (Ticks, Message) -> (Chans, [(Ticks, Message)])
+playNote :: Chans -> (Time, Message) -> (Chans, [(Time, Message)])
 playNote chans (t, m@NoteOn{..})
     | velocity == 0
     = playNote chans (t, NoteOff{..})
@@ -194,7 +197,7 @@ playNote chans (t, m@NoteOff{..})
     | otherwise = (chans, [])
 playNote _ m = error $ "unexpected message type" <> show m
 
-messageStats :: Track Ticks -> [(Constructor, Int)]
+messageStats :: Track t -> [(Constructor, Int)]
 messageStats = map (second length) . groupSort . map ((,()) . constructor . snd)
 
 data Constructor
@@ -252,15 +255,15 @@ constructor TimeSignature{} = CTimeSignature
 constructor TrackEnd{} = CTrackEnd
 constructor TrackName{} = CTrackName
 
-trackName :: Track Ticks -> Maybe String
+trackName :: Track t -> Maybe String
 trackName xs
     | (s:_) <- [ s | (_, TrackName s) <- xs ] = Just s
     | otherwise = Nothing
 
-trackText :: Track Ticks -> [String]
+trackText :: Track t -> [String]
 trackText xs = [ s |  (_, Text s) <- xs ]
 
-copyright :: Track Ticks -> [String]
+copyright :: Track t -> [String]
 copyright xs = [ s |  (_, Copyright s) <- xs ]
 
 messageChannel :: Message -> Maybe Channel
