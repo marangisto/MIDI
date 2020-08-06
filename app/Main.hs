@@ -19,6 +19,7 @@ data Options = Options
     { port      :: FilePath
     , dir       :: Maybe FilePath
     , analyze   :: Bool
+    , track     :: [Int]
     , files     :: [FilePath]
     } deriving (Show, Eq, Data, Typeable)
 
@@ -27,6 +28,7 @@ options = Main.Options
     { port = def &= help "serial port"
     , dir = def &= help "working directory"
     , analyze = def &= help "analyze contents"
+    , track = def &= help "select specific track(s)"
     , files = def &= args &= typ "FILES"
     } &=
     verbosity &=
@@ -44,7 +46,6 @@ main = do
     forM_ files $ \fp -> either error (processMIDI opts) =<< MIDI.importFile fp
 
 processMIDI :: Options -> Midi -> IO ()
-    {-
 processMIDI Options{analyze=True,..} Midi{..}  = do
     print fileType
     print timeDiv
@@ -55,16 +56,17 @@ processMIDI Options{analyze=True,..} Midi{..}  = do
         forM_ (trackText xs) $ putStrLn . ("    "<>)
         forM_ (copyright xs) $ putStrLn . ("    "<>)
         forM_ (messageStats xs) $ \(c, n) -> putStrLn (unwords [ "   ", show c, show n ])
-        let ys = noteOnOff $ integrate xs
-        mapM_ print ys
-        -}
-processMIDI _ Midi{..}
-    = forM_ (mergeTracks tracks)
+processMIDI Options{..} Midi{..}
+    = forM_ (mergeTracks $ select track tracks)
     $ processTrack
     . differentiate
     . noteOnOff
     . integrate
     . toRealTime timeDiv
+
+select :: [Int] -> [Track t] -> [Track t]
+select [] = id
+select xs = map snd . filter ((`elem` xs) . fst) . zip [0..]
 
 processTrack :: Show t => Track t -> IO ()
 processTrack xs = mapM_ putStrLn $ mapMaybe (uncurry translateMidi) xs
