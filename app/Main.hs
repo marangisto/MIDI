@@ -2,15 +2,7 @@
 module Main where
 
 import System.Console.CmdArgs
---import qualified Data.ByteString.Char8 as B
---import System.Hardware.Serialport
---import System.Console.Haskeline
---import System.Process (system)
 import System.Directory
---import Control.Concurrent
---import Control.Exception
---import Control.Monad.IO.Class
---import Control.Monad.Loops
 import Control.Monad.Extra
 import Control.Monad
 import Control.Arrow (second)
@@ -22,10 +14,6 @@ import Data.Monoid
 import Data.Maybe
 import qualified Data.Vector as Vector
 import Data.Vector ((//), (!))
---import Data.List (stripPrefix)
---import Data.Maybe
---import Data.IORef
---import System.IO
 
 data Options = Options
     { port      :: FilePath
@@ -68,7 +56,6 @@ processMIDI Options{analyze=True,..} Midi{..}  = do
         forM_ (messageStats xs) $ \(c, n) -> putStrLn (unwords [ "   ", show c, show n ])
         let ys = noteOnOff $ integrateTicks xs
         mapM_ print ys
---processMIDI _ Midi{..} = forM_ (mergeTracks tracks) processTrack
 processMIDI _ Midi{..}
     = forM_ (mergeTracks tracks)
     $ processTrack
@@ -77,9 +64,7 @@ processMIDI _ Midi{..}
     . integrateTicks
 
 processTrack :: Track Ticks -> IO ()
-processTrack xs = do
-    -- putStrLn $ "trackLength " <> show (length xs)
-    mapM_ putStrLn $ mapMaybe (uncurry translateMidi) xs
+processTrack xs = mapM_ putStrLn $ mapMaybe (uncurry translateMidi) xs
 
 translateMidi :: Ticks -> Message -> Maybe String
 translateMidi n NoteOn{..} = Just $ unwords
@@ -112,7 +97,6 @@ integrateTicks [] = []
 integrateTicks xs = scanl f (head xs) xs
     where f (tx, mx) (ty, my) = (tx + ty, my)
 
---differentiateTicks :: [(Ticks, [Message])] -> [(Ticks, [Message])]
 differentiateTicks :: [(Ticks, a)] -> [(Ticks, a)]
 differentiateTicks xs@(x:_) = x : zipWith f (init xs) (tail xs)
     where f (tx, mxs) (ty, mys) = (ty - tx, mys)
@@ -136,14 +120,6 @@ separateKeys = groupSort . map (\(t, m) -> (messageKey m, (t, m)))
 
 separateChannels :: Track Ticks -> [(Maybe Channel, Track Ticks)] -- use on integrated time!
 separateChannels = groupSort . map (\(t, m) -> (messageChannel m, (t, m)))
-
-xnoteOnOff :: Track Ticks -> Track Ticks -- use on integrated time!
-xnoteOnOff xs = concat
-    [ [ (t, NoteOn c k v), (t, NoteOff c k 127) ]
-    | ((t, NoteOn { key = k, velocity = v }), c)
-    <- zip ys $ concat $ repeat [1..8]
-    ]
-    where ys = [ x | x@(_, NoteOn{}) <- xs ]
 
 data State
     = Idle Ticks
